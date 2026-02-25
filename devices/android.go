@@ -261,6 +261,32 @@ func (d *AndroidDevice) TakeScreenshot() ([]byte, error) {
 }
 
 func (d *AndroidDevice) LaunchApp(bundleID string) error {
+	// 1. 尝试自动解析该包名的 Launcher Activity
+	// 命令: adb shell cmd package resolve-activity --brief <bundleID>
+	// 成功时输出类似: com.netease.uuremote/.ui.activity.LaunchActivity
+	resolveOutput, err := d.runAdbCommand("shell", "cmd", "package", "resolve-activity", "--brief", bundleID)
+	
+	var activityPath string
+	if err == nil {
+		lines := strings.Split(strings.TrimSpace(string(resolveOutput)), "\n")
+		// 获取最后一行输出（过滤掉可能的警告信息）
+		lastLine := strings.TrimSpace(lines[len(lines)-1])
+		
+		// 检查解析结果是否合法
+		if strings.Contains(lastLine, "/") && !strings.Contains(lastLine, "No activity found") {
+			activityPath = lastLine
+		}
+	}
+
+	// 2. 如果解析成功，使用 am start 精准打击
+	if activityPath != "" {
+		output, err := d.runAdbCommand("shell", "am", "start", "-n", activityPath)
+		if err == nil {
+			return nil
+		}
+		// 如果精准启动失败（极少见），记录错误并尝试回退到 monkey
+		fmt.Printf("Explicit launch failed, falling back to monkey: %v\n", string(output))
+	}
 	output, err := d.runAdbCommand("shell", "monkey", "-p", bundleID, "-c", "android.intent.category.LAUNCHER", "1")
 	if err != nil {
 		return fmt.Errorf("failed to launch app %s: %v\nOutput: %s", bundleID, err, string(output))
